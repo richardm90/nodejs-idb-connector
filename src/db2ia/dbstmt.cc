@@ -2770,18 +2770,54 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
         if(value.IsString())
         {
           std::string string = value.ToString().Utf8Value();
+
+          // TODO: parameters are also used on selects
+
+          // set the indicator to be SQL_NTS
+          // this helps in edge cases like empty string where indicator is 
+          // set 0 (which CLI doesn't like for some reason)
+          param[i].ind = SQL_NTS;
+
+          // Extra SQL_CHAR parameter handling
+          if (param[i].paramType == SQL_CHAR)
+          {
+            // Pad parameter with trailing spaces
+            if (string.length() < param[i].paramSize)
+            {
+              string.append(param[i].paramSize - string.length(), ' ');
+            }
+            // Set indicator to parameter size
+            // - this stops the SQL0445 message from the joblog
+            param[i].ind = param[i].paramSize;
+          }
+          
           size_t str_length = string.length();
           const char *cString = string.c_str();
-          // CLI does not honor the buffer size parameter or the output size in the indicator
-          // Ensure the buffer size is at least the size of parameter or the size of the string
 
-          param[i].buf = (char *)calloc(std::max(static_cast<size_t>(param[i].paramSize), str_length) + 1, sizeof(char));
-          // set the indicator to be SQL_NTS
-          // this helps in edge cases like empty string where indicator is set 0 (which CLI doesn't like for some reason)
-          param[i].ind = SQL_NTS;
+          // Extra SQL_VARCHAR parameters with trailing spaces
+          if (param[i].paramType == SQL_VARCHAR)
+          {
+            // Set indicator
+            // - if the parameter value length is zero then set to SQL_NTS, 
+            //   which ensures the correct length is set in the procedure
+            // - otherwise set to parameter value length
+            if (str_length == 0)
+            {
+              param[i].ind = SQL_NTS;
+            }
+            else
+            {
+              // TODO: test min, max, zero and more
+              param[i].ind = str_length;
+            }
+          }
+
+          // Ensure the buffer size is the size of parameter
+          param[i].buf = (char *)calloc(param[i].paramSize + 1, sizeof(char));
+
           // SQL_PARAM_INPUT_OUTPUT is always set so
           // copy the string to the buffer
-          strcpy((char*)param[i].buf, cString);
+          strncpy((char*)param[i].buf, cString, param[i].paramSize);
         }
         else
         {
