@@ -2881,7 +2881,7 @@ int DbStmt::fetchSp(Napi::Env env, Napi::Array *array)
       else if (p->valueType == SQL_C_BIT) // Boolean
         array->Set(j, Napi::Boolean::New(env, *(bool *)p->buf));
       else
-        array->Set(j, Napi::String::New(env, (char *)p->buf));
+        array->Set(j, Napi::String::New(env, (char *)p->buf, param[i].paramSize));
       j++;
     }
   }
