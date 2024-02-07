@@ -2860,7 +2860,9 @@ int DbStmt::fetchSp(Napi::Env env, Napi::Array *array)
     db2ParameterDescription *p = &param[i];
     if (p->io != SQL_PARAM_INPUT)
     {
-      if (p->valueType == SQL_C_BIGINT) // Integer
+      if (p->ind == SQL_NULL_DATA) // NULL value
+        array->Set(j, env.Null());
+      else if (p->valueType == SQL_C_BIGINT) // Integer
         array->Set(j, Napi::Number::New(env, *(int64_t *)p->buf).Int32Value());
       else if (p->valueType == SQL_C_DOUBLE) // Decimal
         array->Set(j, Napi::Number::New(env, *(double *)p->buf));
