@@ -1,7 +1,11 @@
 # idb-connector changelog
 
-## [1.2.19](https://github.com/IBM/nodejs-idb-connector/compare/1.2.18...1.2.19) (2024-02-05)
+## 1.2.19.rm1
+- fix: CHAR parameters are now padded with spaces to the parameter length
+- fix: Procedure input parameters now correctly handle null values
+- fix: Procedure output parameters now correctly handle null values
 
+## [1.2.19](https://github.com/IBM/nodejs-idb-connector/compare/1.2.18...1.2.19) (2024-02-05)
 
 ### Bug Fixes
 

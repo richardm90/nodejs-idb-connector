@@ -2597,34 +2597,46 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
         error = "VALUE OF PARAMETER " + std::to_string(i + 1) + " IS UNDEFINED\n";
         return -1;
       }
-
+      
       if (bindIndicator == 0 || bindIndicator == 1)
-      { //Parameter is string or clob
-        std::string string = value.ToString().Utf8Value();
-        size_t str_length = string.length();
-        const char *cString = string.c_str();
+      { //Parameter is string (1) or clob (0)
         param[i].valueType = SQL_C_CHAR;
-        // CLI does not honor the buffer size parameter or the output size in the indicator
-        // Ensure the buffer size is at least the size of parameter or the size of the string
-
-        param[i].buf = (char *)calloc(std::max(static_cast<size_t>(param[i].paramSize), str_length) + 1, sizeof(char));
-        // Set the indicator to be SQL_NTS
-        // this helps in edge cases like empty string where indicator is set 0 (which CLI doesn't like for some reason)
-        param[i].ind = SQL_NTS;
-        if (param[i].io != SQL_PARAM_OUTPUT) {
+        param[i].buf = (char *)calloc(param[i].paramSize + 1, sizeof(char));
+        if (value.IsNull())
+        {
+          param[i].ind = SQL_NULL_DATA;
+        }
+        else
+        {
+          std::string string = value.ToString().Utf8Value();
+          const char *cString = string.c_str();
+          // Set the indicator to be SQL_NTS
+          // this helps in edge cases like empty string where indicator is set 0 (which CLI doesn't like for some reason)
+          param[i].ind = SQL_NTS;
+          if (param[i].io != SQL_PARAM_OUTPUT) {
             // for SQL_PARAM_INPUT and SQL_PARAM_INPUT_OUTPUT
             // copy the string to the buffer
             strcpy((char*)param[i].buf, cString);
+          }
         }
       }
       else if (bindIndicator == 2)
-      { //Parameter is Integer
+      { //Parameter is Integer (2)
         int64_t *number = (int64_t *)malloc(sizeof(int64_t));
-        *number = value.ToNumber().Int32Value();
         param[i].valueType = SQL_C_BIGINT;
+        if (value.IsNull())
+        {
+          param[i].ind = SQL_NULL_DATA;
+        }
+        else
+        {
+          *number = value.ToNumber().Int32Value();
+          param[i].ind = 0;
+        }
         param[i].buf = number;
-        param[i].ind = 0;
       }
+      // TODO: is the " || value.IsNull()" bit correct? Shouldn't each
+      //   bindeIndicator need to deal with null differently.
       else if (bindIndicator == 3 || value.IsNull())
       { //Parameter is NULL
         param[i].valueType = SQL_C_DEFAULT;
@@ -2663,7 +2675,7 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
       }
       else
       { //bindIndicator did not match any cases
-        error = "BIND INDICATOR FOR PARAMETER " + std::to_string(i + 1) + "IS INVALID\n";
+        error = "BIND INDICATOR (" + std::to_string(bindIndicator) + ") FOR PARAMETER " + std::to_string(i + 1) + " IS INVALID\n";
         return -1;
       }
     }
