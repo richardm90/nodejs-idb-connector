@@ -6,7 +6,6 @@
 #include "dbconn.h"
 #include <vector>
 
-
 struct db2ColumnDescription
 {
   SQLCHAR *name;

@@ -5,6 +5,7 @@
 - fix: Procedure output parameters now correctly handle null values
 - fix: Input CHAR parameter is now padded with spaces to the parameter size
 - fix: Output CHAR parameter result is now limited to parameter size
+- fix: Parameter binding array indicator property ignored, uses value retrieved via SQLDescribeParam API
 
 ## [1.2.19](https://github.com/IBM/nodejs-idb-connector/compare/1.2.18...1.2.19) (2024-02-05)
 

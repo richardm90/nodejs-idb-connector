@@ -2564,7 +2564,8 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
       object = params->Get(i).As<Napi::Array>(); //Get a ? parameter from the array.
       value = object.Get((uint32_t)0);  // have to cast otherwise it complains about ambiguity
       ioValue = object.Get(1);
-      bindValue = object.Get(2);
+      // TODO: bindValue and bindIndicator redundant
+      // bindValue = object.Get(2);
 
       //validate io
       if (!ioValue.IsNumber())
@@ -2580,28 +2581,136 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
         error = "IO TYPE OF PARAMETER " + std::to_string(i + 1) + " IS INVALID. SHOULD EQUAL PARAM INPUT, OUTPUT, OR INPUT_OUTPUT";
         return -1;
       }
-
-      //validate bindIndicator
-      if (!bindValue.IsNumber())
-      {
-        error = "BIND INDICATOR TYPE OF PARAMETER " + std::to_string(i + 1) + " IS INVALID\n";
-        return -1;
-      }
-      
       param[i].io = io;
-      bindIndicator = bindValue.ToNumber().Int32Value(); //convert from Napi::Value to an int
 
-      //validate the value is not undefined
-      if (value.IsUndefined())
-      { // if value is undefined convert it to null
-        error = "VALUE OF PARAMETER " + std::to_string(i + 1) + " IS UNDEFINED\n";
-        return -1;
-      }
+      // //validate bindIndicator
+      // if (!bindValue.IsNumber())
+      // {
+      //   error = "BIND INDICATOR TYPE OF PARAMETER " + std::to_string(i + 1) + " IS INVALID\n";
+      //   return -1;
+      // }
       
-      if (bindIndicator == 0 || bindIndicator == 1)
-      { //Parameter is string (1) or clob (0)
+      // bindIndicator = bindValue.ToNumber().Int32Value(); //convert from Napi::Value to an int
+
+      // //validate the value is not undefined
+      // if (value.IsUndefined())
+      // { // if value is undefined convert it to null
+      //   error = "VALUE OF PARAMETER " + std::to_string(i + 1) + " IS UNDEFINED\n";
+      //   return -1;
+      // }
+
+      // Each case needs to set:
+      // - param[i].valueType
+      // - param[i].buf
+      // - param[i].ind
+
+      if (param[i].paramType == SQL_CHAR || param[i].paramType == SQL_WCHAR)
+      {
+        std::string string = value.ToString().Utf8Value();
+        size_t paramSize = static_cast<size_t>(param[i].paramSize);
+        // Pad parameter with trailing spaces
+        if (string.length() < paramSize)
+        {
+          string.append(paramSize - string.length(), ' ');
+        }
+
+        // Set type
         param[i].valueType = SQL_C_CHAR;
-        param[i].buf = (char *)calloc(param[i].paramSize + 1, sizeof(char));
+
+        // Set indicator
+        // - if the parameter value is null set indicator to SQL_NULL_DATA
+        // - otherwise set to parameter size, which stops the SQL0445 
+        //   message from appearing in the joblog
+        if (value.IsNull())
+        {
+          param[i].ind = SQL_NULL_DATA;
+        }
+        else
+        {
+          param[i].ind = param[i].paramSize;
+        }
+
+        // Set buffer
+        param[i].buf = (char *)calloc(paramSize + 1, sizeof(char));
+        if (!value.IsNull())
+        {
+          if (param[i].io != SQL_PARAM_OUTPUT)
+          {
+            const char *cString = string.c_str();
+            strncpy((char*)param[i].buf, cString, paramSize);
+          }
+        }
+      }
+      else if (param[i].paramType == SQL_VARCHAR || param[i].paramType == SQL_WVARCHAR)
+      {
+        std::string string = value.ToString().Utf8Value();
+        size_t str_length = string.length();
+        size_t paramSize = static_cast<size_t>(param[i].paramSize);
+
+        // Set type
+        param[i].valueType = SQL_C_CHAR;
+
+        // Set indicator
+        // - if the parameter value is null set indicator to SQL_NULL_DATA
+        // - if the parameter value length is zero then set indicator to
+        //   SQL_NTS, which ensures the correct length is set in the
+        //   procedure
+        // - otherwise set to parameter value length
+        if (value.IsNull())
+        {
+          // TODO: this worked on VARCHAR(1) rather than SQL_NULL_DATA
+          param[i].ind = SQL_NTS;
+        }
+        else if (str_length == 0)
+        {
+          param[i].ind = SQL_NTS;
+        }
+        else
+        {
+          param[i].ind = str_length;
+        }
+
+        // Set buffer
+        param[i].buf = (char *)calloc(paramSize + 1, sizeof(char));
+        if (param[i].io != SQL_PARAM_OUTPUT && str_length > 0)
+        {
+          const char *cString = string.c_str();
+          strncpy((char*)param[i].buf, cString, paramSize);
+        }
+      }
+      else if (param[i].paramType == SQL_SMALLINT || param[i].paramType == SQL_INTEGER || param[i].paramType == SQL_BIGINT)
+      {
+        // Set type
+        param[i].valueType = SQL_C_BIGINT;
+        
+        // Set indicator
+        // - if the parameter value is null set indicator to SQL_NULL_DATA
+        // - if the parameter value length is zero then set indicator to
+        //   SQL_NTS, which ensures the correct length is set in the
+        //   procedure
+        // - otherwise set to parameter value length
+        if (value.IsNull())
+        {
+          param[i].ind = SQL_NULL_DATA;
+        }
+        else
+        {
+          param[i].ind = 0;
+        }
+
+        // Set buffer
+        int64_t *number = (int64_t *)malloc(sizeof(int64_t));
+        if (!value.IsNull() && value.IsNumber())
+        {
+          *number = value.ToNumber().Int32Value();
+        }
+        param[i].buf = number;
+      }
+      // TODO: a lot of this is redundant
+      else if (param[i].paramType == 0 || bindIndicator == 1)
+      { //Parameter is string (1) or clob (0)
+        // param[i].valueType = SQL_C_CHAR;
+        // param[i].buf = (char *)calloc(param[i].paramSize + 1, sizeof(char));
         if (value.IsNull())
         {
           param[i].ind = SQL_NULL_DATA;
@@ -2620,21 +2729,21 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
           }
         }
       }
-      else if (bindIndicator == 2)
-      { //Parameter is Integer (2)
-        int64_t *number = (int64_t *)malloc(sizeof(int64_t));
-        param[i].valueType = SQL_C_BIGINT;
-        if (value.IsNull())
-        {
-          param[i].ind = SQL_NULL_DATA;
-        }
-        else
-        {
-          *number = value.ToNumber().Int32Value();
-          param[i].ind = 0;
-        }
-        param[i].buf = number;
-      }
+      // else if (bindIndicator == 2)
+      // { //Parameter is Integer (2)
+      //   int64_t *number = (int64_t *)malloc(sizeof(int64_t));
+      //   param[i].valueType = SQL_C_BIGINT;
+      //   if (value.IsNull())
+      //   {
+      //     param[i].ind = SQL_NULL_DATA;
+      //   }
+      //   else
+      //   {
+      //     *number = value.ToNumber().Int32Value();
+      //     param[i].ind = 0;
+      //   }
+      //   param[i].buf = number;
+      // }
       // TODO: is the " || value.IsNull()" bit correct? Shouldn't each
       //   bindeIndicator need to deal with null differently.
       else if (bindIndicator == 3 || value.IsNull())
@@ -2870,6 +2979,9 @@ int DbStmt::fetchSp(Napi::Env env, Napi::Array *array)
   for (int i = 0, j = 0; i < paramCount; i++)
   {
     db2ParameterDescription *p = &param[i];
+
+    DEBUG(this, "fetchSp: io(%d), ind(%d)\n", p->io, p->ind);
+
     if (p->io != SQL_PARAM_INPUT)
     {
       if (p->ind == SQL_NULL_DATA) // NULL value
@@ -2881,7 +2993,31 @@ int DbStmt::fetchSp(Napi::Env env, Napi::Array *array)
       else if (p->valueType == SQL_C_BIT) // Boolean
         array->Set(j, Napi::Boolean::New(env, *(bool *)p->buf));
       else
-        array->Set(j, Napi::String::New(env, (char *)p->buf, param[i].paramSize));
+      {
+        // Napi::String str = Napi::String::New(env, (char *)p->buf, param[i].paramSize);
+        // DEBUG(this, "fetchSp: str(%s)\n", str);
+        // array->Set(j, Napi::String::New(env, (char *)p->buf, param[i].paramSize));
+        // The following did work ...
+        // std::string emptyStr = "";
+        // Napi::String str = Napi::String::New(env, emptyStr);
+        // The following did NOT work ...
+        // Napi::String str = Napi::String::New(env, (char *)p->buf,1);
+        // const char* cString = p->buf;
+        // The following did work ...
+        // std::string cppString;
+        // if ((char *)p->buf != nullptr)
+        //   cppString = (char *)p->buf;
+        // Napi::String str = Napi::String::New(env, cppString);
+        // array->Set(j, str);
+        DEBUG(this, "fetchSp: p->buf(%s)\n", (char *)p->buf);
+        std::string bufString;
+        if ((char *)p->buf != nullptr)
+        {
+          bufString = (char *)p->buf;
+          DEBUG(this, "fetchSp: bufString(%s)\n", bufString);
+        }
+        array->Set(j, Napi::String::New(env, bufString));        
+      }
       j++;
     }
   }
