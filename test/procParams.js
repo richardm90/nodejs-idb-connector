@@ -14,6 +14,8 @@ const {
     CHAR, INT,
 } = db2a;
 
+let lastSQL0445Count = 0;
+
 // function createGetJobNameSP(conn, user) {
 //     const sql = `CREATE OR REPLACE PROCEDURE ${user}.GET_JOBNAME
 //                 ( OUT JOBNAME VARCHAR(28) )
@@ -32,36 +34,36 @@ const {
 //     stmt.close();
 // }
 
-async function getJobName(conn, user) {
+function getJobName(conn, user) {
     const stmt = new dbstmt(conn);
     stmt.prepareSync(`SELECT QSYS2.JOB_NAME FROM SYSIBM.SYSDUMMY1`);
     stmt.executeSync();
-    const result = await stmt.fetchAllSync();
+    const result = stmt.fetchAllSync();
     stmt.close();
-    console.log(`Result: ${JSON.stringify(result)}`);
     const jobName = result[0].JOB_NAME;
     return jobName;
 }
 
-async function gotSQL0445Message(conn, user) {
+function gotSQL0445Message(conn, user) {
     const stmt = new dbstmt(conn);
     stmt.prepareSync(`SELECT COUNT(*) AS SQL0445_COUNT FROM TABLE(QSYS2.JOBLOG_INFO('*')) WHERE MESSAGE_ID='SQL0445'`);
     stmt.executeSync();
-    const result = await stmt.fetchAllSync();
+    const result = stmt.fetchAllSync();
     stmt.close();
-    console.log(`Result: ${JSON.stringify(result)}`);
     const SQL0445Count = result[0].SQL0445_COUNT;
-    const getSQL0445Message = (SQL0445Count > 0);
-    return getSQL0445Message;
+    let hasNewSQL0445Message = false;
+    if (SQL0445Count > lastSQL0445Count) {
+        hasNewSQL0445Message = true;
+        lastSQL0445Count = SQL0445Count;
+    }
+    return hasNewSQL0445Message;
 }
 
-async function printJobLog(conn) {
+function printJobLog(conn) {
     const stmt = new dbstmt(conn);
     stmt.prepareSync(`CALL QSYS2.QCMDEXC('DSPJOBLOG OUTPUT(*PRINT)')`);
     stmt.executeSync();
-    const result = await stmt.fetchAllSync();
     stmt.close();
-    console.log(`Result: ${JSON.stringify(result)}`);
     return;
 }
 
@@ -69,12 +71,12 @@ async function printJobLog(conn) {
 describe('Procedure Parameter Test', () => {
     let dbConn, dbStmt, params, user, jobname;
 
-    before(async () => {
+    before(() => {
         user = (process.env.USER).toUpperCase();
         dbConn = new dbconn();
         dbConn.debug(true);
         dbConn.conn('*LOCAL');
-        jobname = await getJobName(dbConn, user);
+        jobname = getJobName(dbConn, user);
     });
 
     after(() => {
@@ -510,7 +512,7 @@ describe('Procedure Parameter Test', () => {
 
     describe('Stored procedure with VARCHAR(1) parameters', () => {
         let user = (process.env.USER).toUpperCase();
-        let sql = `CALL RMTEMP.SP_TEST_PARAMS(?,?,?,?,?,?,?,?,?)`;
+        let sql = `CALL ${user}.SP_TEST_PARAMS(?,?,?,?,?,?,?,?,?)`;
         let crtSP = `CREATE OR REPLACE PROCEDURE ${user}.SP_TEST_PARAMS(
                         -- The passed parameters
                         IN     P_IN          VARCHAR(1) ,
@@ -540,7 +542,9 @@ describe('Procedure Parameter Test', () => {
                             -- Set the parameter values
                             SET P_IN_INSIDE    = P_IN;
                             SET P_INOUT_INSIDE = P_INOUT;
-                            SET P_OUT_INSIDE   = P_OUT;
+                            -- SET P_OUT_INSIDE   = P_OUT;
+                            SET P_OUT_INSIDE   = '';
+                            CALL SYSTOOLS.LPRINTF('LENGTH=' CONCAT CHAR(LENGTH(P_OUT_INSIDE)));
 
                             -- Set the passed parameters
                             SET P_IN           = UPPER(P_IN);
@@ -579,8 +583,15 @@ describe('Procedure Parameter Test', () => {
         //         [null, OUT, INT], [null, OUT, INT], [null, OUT, INT],
         //         [null, OUT, CHAR], [null, OUT, CHAR], [null, OUT, CHAR]
         //     ];
+
+        //     console.log(`Params: ${JSON.stringify(params)}`);
+
         //     dbStmt.bindParametersSync(params);
         //     const result = dbStmt.executeSync();
+
+        //     console.log(`Result: ${JSON.stringify(result)}`);
+
+        //     printJobLog(dbConn);
 
         //     expect(result.length).to.equal(8);
         //     // Passed parameters
@@ -597,10 +608,11 @@ describe('Procedure Parameter Test', () => {
         //     expect(result[5]).to.equal('a');
         //     expect(result[6]).to.equal('b');
         //     expect(result[7]).to.equal(null);
+        //     expect(gotSQL0445Message(dbConn, user)).to.equal(false);
         //     done();
         // });
 
-        it(`VARCHAR(1) #2 empty character passed`, async (done) => {
+        it(`VARCHAR(1) #2 empty character passed`, (done) => {
             dbStmt = new dbstmt(dbConn);
             dbStmt.prepareSync(sql);
             const params = [
@@ -615,9 +627,9 @@ describe('Procedure Parameter Test', () => {
             const result = dbStmt.executeSync();
 
             console.log(`Result: ${JSON.stringify(result)}`);
+            printJobLog(dbConn);
 
-            await printJobLog(dbConn);
-
+            expect(gotSQL0445Message(dbConn, user)).to.equal(false);
             expect(result.length).to.equal(8);
             // Passed parameters
             expect(result[0]).to.equal(''); // INOUT param, should change
@@ -644,8 +656,13 @@ describe('Procedure Parameter Test', () => {
         //         [null, OUT, INT], [null, OUT, INT], [null, OUT, INT],
         //         [null, OUT, CHAR], [null, OUT, CHAR], [null, OUT, CHAR]
         //     ];
+
+        //     console.log(`Params: ${JSON.stringify(params)}`);
+
         //     dbStmt.bindParametersSync(params);
         //     const result = dbStmt.executeSync();
+
+        //     console.log(`Result: ${JSON.stringify(result)}`);
 
         //     expect(result.length).to.equal(8);
         //     // Passed parameters
@@ -662,6 +679,7 @@ describe('Procedure Parameter Test', () => {
         //     expect(result[5]).to.equal(null);
         //     expect(result[6]).to.equal(null);
         //     expect(result[7]).to.equal(null);
+        //     expect(gotSQL0445Message(dbConn, user)).to.equal(false);
         //     done();
         // });
 

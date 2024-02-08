@@ -2659,7 +2659,7 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
         if (value.IsNull())
         {
           // TODO: this worked on VARCHAR(1) rather than SQL_NULL_DATA
-          param[i].ind = SQL_NTS;
+          param[i].ind = SQL_NULL_DATA;
         }
         else if (str_length == 0)
         {
@@ -2963,7 +2963,8 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
         0,                  //SQLLEN BufferLength (Not Used in CLI)
         &param[i].ind);     //SQLLEN* StrLen_or_IndPtr -length of the parameter marker value stored at ParameterValuePtr.
 
-    DEBUG(this, "SQLBindParameter(%d) TYPE[%2d] SIZE[%3d] DIGI[%d] IO[%d] IND[%3d] INDEX[%i]\n", sqlReturnCode, param[i].paramType, param[i].paramSize, param[i].decDigits, param[i].io, param[i].ind, i)
+    DEBUG(this, "SQLBindParameter(%d) TYPE[%2d] SIZE[%3d] DIGI[%d] IO[%d] IND[%3d] INDEX[%i] BUF[%s]\n", sqlReturnCode, param[i].paramType, param[i].paramSize, param[i].decDigits, param[i].io, param[i].ind, i, param[i].buf)
+    print_hex((char *)param[i].buf);
 
     if (sqlReturnCode != SQL_SUCCESS)
     {
@@ -2980,7 +2981,8 @@ int DbStmt::fetchSp(Napi::Env env, Napi::Array *array)
   {
     db2ParameterDescription *p = &param[i];
 
-    DEBUG(this, "fetchSp: io(%d), ind(%d)\n", p->io, p->ind);
+    DEBUG(this, "fetchSp(%d): io(%d), ind(%d), p->buf(%s)\n", i+1, p->io, p->ind, (char *)p->buf);
+    print_hex((char *)p->buf);
 
     if (p->io != SQL_PARAM_INPUT)
     {
@@ -3009,12 +3011,12 @@ int DbStmt::fetchSp(Napi::Env env, Napi::Array *array)
         //   cppString = (char *)p->buf;
         // Napi::String str = Napi::String::New(env, cppString);
         // array->Set(j, str);
-        DEBUG(this, "fetchSp: p->buf(%s)\n", (char *)p->buf);
+        // DEBUG(this, "fetchSp: p->buf(%s)\n", (char *)p->buf);
         std::string bufString;
         if ((char *)p->buf != nullptr)
         {
           bufString = (char *)p->buf;
-          DEBUG(this, "fetchSp: bufString(%s)\n", bufString);
+          // DEBUG(this, "fetchSp: p->buf != nullptr\n");
         }
         array->Set(j, Napi::String::New(env, bufString));        
       }
@@ -3023,6 +3025,13 @@ int DbStmt::fetchSp(Napi::Env env, Napi::Array *array)
   }
   freeSp();
   return 0;
+}
+
+void DbStmt::print_hex(const char *s)
+{
+  while(*s)
+    printf("%02x", (unsigned int) *s++);
+  printf("\n");
 }
 
 int DbStmt::fetch(Napi::Env env, Napi::Object *row)

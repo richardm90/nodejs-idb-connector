@@ -112,6 +112,7 @@ private:
   int bindParams(Napi::Env env, Napi::Array *params, std::string &error);
   int fetchSp(Napi::Env env, Napi::Array *array);
   int fetch(Napi::Env env, Napi::Object *row);
+  void print_hex(const char *s);
 
   bool stmtAllocated = false;
   bool resultSetAvailable = false;
