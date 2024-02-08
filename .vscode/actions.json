@@ -1,0 +1,38 @@
+[
+  {
+    "name": "Echo Code4i variables",
+    "command": "export HOME=/home/richard; export PATH=~/bin:/QOpenSys/pkgs/lib/nodejs18/bin:/QOpenSys/pkgs/bin:$PATH; echo 'BASENAME:     &BASENAME'; echo 'EXT:          &EXT'; echo 'FILEDIR:      &FILEDIR'; echo 'FULLPATH:     &FULLPATH'; echo $\"HOME:         $HOME\"; echo 'LOCALPATH:    &LOCALPATH'; echo 'NAME:         &NAME'; echo 'PARENT:       &PARENT'; echo $\"PATH:         $PATH\"; echo $\"PWD:          $PWD\"; echo 'RELATIVEPATH: &RELATIVEPATH'; echo 'WORKDIR:      &WORKDIR';",
+    "environment": "pase",
+    "deployFirst": true,
+    "extensions": [
+      "GLOBAL"
+    ]
+  },
+  {
+    "name": "Build from source 🔨",
+    "command": "export HOME=/home/richard; cd &WORKDIR; export PATH=~/bin:/QOpenSys/pkgs/lib/nodejs18/bin:/QOpenSys/pkgs/bin:$PATH; npm install --build-from-source",
+    "environment": "pase",
+    "deployFirst": true,
+    "extensions": [
+      "GLOBAL"
+    ]
+  },
+  {
+    "name": "Run all tests 🧪",
+    "command": "export HOME=/home/richard; cd &WORKDIR; export PATH=~/bin:/QOpenSys/pkgs/lib/nodejs18/bin:/QOpenSys/pkgs/bin:$PATH; npm test test/",
+    "environment": "pase",
+    "deployFirst": true,
+    "extensions": [
+      "GLOBAL"
+    ]
+  },
+  {
+    "name": "Run current test script 🧪",
+    "command": "export HOME=/home/richard; cd &WORKDIR; export PATH=~/bin:/QOpenSys/pkgs/lib/nodejs18/bin:/QOpenSys/pkgs/bin:$PATH; npm test &RELATIVEPATH",
+    "environment": "pase",
+    "deployFirst": true,
+    "extensions": [
+      "GLOBAL"
+    ]
+  }
+]

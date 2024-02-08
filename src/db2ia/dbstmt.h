@@ -28,6 +28,7 @@ struct db2ParameterDescription
   int io;
   SQLINTEGER ind;
   void *buf;
+  SQLINTEGER buflen;
 };
 
 struct resultSetItem

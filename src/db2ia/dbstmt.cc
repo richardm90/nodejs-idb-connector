@@ -433,7 +433,6 @@ Napi::Value DbStmt::ExecSync(const Napi::CallbackInfo &info)
   if (sqlReturnCode == SQL_SUCCESS_WITH_INFO)
   {
     sqlError errObj = returnErrObj(SQL_HANDLE_STMT, stmth);
-    DEBUG(this, "SQLExecDirect SUCCESS_WITH_INFO (%d) %s\n", errObj.sqlCode, errObj.sqlState);
     if (!strcmp(errObj.sqlState, "0100C") && errObj.sqlCode == 466)
     {
       // Stored Procedures with Result Sets
@@ -1179,6 +1178,7 @@ Napi::Value DbStmt::ExecuteSync(const Napi::CallbackInfo &info)
       // Stored Procedures with Result Sets
       this->resultSetAvailable = true;
     }
+    DEBUG(this, "ExecuteSync SQL_SUCCESS_WITH_INFO (%d) %s\n", errObj.sqlCode, errObj.sqlState);
   }
   else if (sqlReturnCode != SQL_SUCCESS)
   {
@@ -1219,6 +1219,7 @@ Napi::Value DbStmt::ExecuteSync(const Napi::CallbackInfo &info)
   // Parameters were bound
   if (this->param && this->paramCount > 0)
   {
+    DEBUG(this, "SQLExecuteSync() Parameters were bound\n")
     Napi::Array array = Napi::Array::New(env);
     // FetchSp gets back output params from Stored Procedures.
     this->fetchSp(env, &array);
@@ -2443,6 +2444,8 @@ int DbStmt::fetchData()
 
 int DbStmt::buildJsObject(Napi::Env env, Napi::Array *array)
 {
+  DEBUG(this, "buildJsObject: start\n");
+
   for (std::size_t row = 0; row < resultSetInC.size(); row++)
   {
     Napi::Object rowInJs = Napi::Object::New(env);
@@ -2451,7 +2454,10 @@ int DbStmt::buildJsObject(Napi::Env env, Napi::Array *array)
       Napi::Value value;
       Napi::Value nvalue;
       if (resultSetInC[row][col].rlength == SQL_NULL_DATA)
+      {
         value = env.Null();
+        DEBUG(this, "buildJsObject: null\n");
+      }
       else
       {
         switch (dbColumn[col].sqlType)
@@ -2489,8 +2495,11 @@ int DbStmt::buildJsObject(Napi::Env env, Napi::Array *array)
             break;
           }
         default:
-            value = Napi::String::New(env, resultSetInC[row][col].data);
+        {
+          DEBUG(this, "buildJsObject: default, data(%s)\n",resultSetInC[row][col].data);
+          value = Napi::String::New(env, resultSetInC[row][col].data);
           break;
+        }
         }
       }
       rowInJs.Set(Napi::String::New(env, (char const *)dbColumn[col].name), value); //Build a JS row
@@ -2500,6 +2509,8 @@ int DbStmt::buildJsObject(Napi::Env env, Napi::Array *array)
     free(resultSetInC[row]);  //Free current row of the C array of the result set
   }
   resultSetInC.clear(); //Free the C array of the result set
+
+  DEBUG(this, "buildJsObject: end\n");
   return 0;
 }
 
@@ -2558,6 +2569,8 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
       error = "SQLDescribeParm FAILED\n" + returnErrMsg(SQL_HANDLE_STMT, stmth);
       return -1;
     }
+    
+    param[i].buflen = 0;
 
     if(params->Get(i).IsArray()) // For old BindParams APIs, parameters are 2-D array.
     {
@@ -2565,7 +2578,7 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
       value = object.Get((uint32_t)0);  // have to cast otherwise it complains about ambiguity
       ioValue = object.Get(1);
       // TODO: bindValue and bindIndicator redundant
-      // bindValue = object.Get(2);
+      bindValue = object.Get(2);
 
       //validate io
       if (!ioValue.IsNumber())
@@ -2583,14 +2596,14 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
       }
       param[i].io = io;
 
-      // //validate bindIndicator
-      // if (!bindValue.IsNumber())
-      // {
-      //   error = "BIND INDICATOR TYPE OF PARAMETER " + std::to_string(i + 1) + " IS INVALID\n";
-      //   return -1;
-      // }
+      //validate bindIndicator
+      if (!bindValue.IsNumber())
+      {
+        error = "BIND INDICATOR TYPE OF PARAMETER " + std::to_string(i + 1) + " IS INVALID\n";
+        return -1;
+      }
       
-      // bindIndicator = bindValue.ToNumber().Int32Value(); //convert from Napi::Value to an int
+      bindIndicator = bindValue.ToNumber().Int32Value(); //convert from Napi::Value to an int
 
       // //validate the value is not undefined
       // if (value.IsUndefined())
@@ -2604,12 +2617,12 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
       // - param[i].buf
       // - param[i].ind
 
-      if (param[i].paramType == SQL_CHAR || param[i].paramType == SQL_WCHAR)
+      if (param[i].paramType == SQL_CHAR || param[i].paramType == SQL_VARCHAR || param[i].paramType == SQL_WCHAR)
       {
         std::string string = value.ToString().Utf8Value();
         size_t paramSize = static_cast<size_t>(param[i].paramSize);
         // Pad parameter with trailing spaces
-        if (string.length() < paramSize)
+        if (string.length() < paramSize && param[i].paramType != SQL_VARCHAR)
         {
           string.append(paramSize - string.length(), ' ');
         }
@@ -2621,24 +2634,54 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
         // - if the parameter value is null set indicator to SQL_NULL_DATA
         // - otherwise set to parameter size, which stops the SQL0445 
         //   message from appearing in the joblog
-        if (value.IsNull())
+        if (param[i].io == SQL_PARAM_OUTPUT)
+        {
+          // param[i].ind = 0;
+          param[i].ind = SQL_NTS;
+        }
+        else if (value.IsNull())
         {
           param[i].ind = SQL_NULL_DATA;
+        }
+        else if (param[i].paramType == SQL_VARCHAR)
+        {
+          size_t str_length = string.length();
+          const char *cString2 = string.c_str();
+          if (cString2[0] == '\0') // Check for JS empty-string.
+          {
+            param[i].ind = SQL_NTS;
+          } else {
+            param[i].ind = std::min(paramSize, str_length);
+          }
+
+          // if (string.length() > 0)
+          // {
+          //   param[i].ind = string.length();
+          // }
+          // else
+          // {
+          //   param[i].ind = SQL_NTS;
+          // }
+          // param[i].ind = SQL_NTS; // <-- causes empty output var to be single space
         }
         else
         {
           param[i].ind = param[i].paramSize;
         }
 
+        param[i].buflen = param[i].paramSize + 1;
+
         // Set buffer
         param[i].buf = (char *)calloc(paramSize + 1, sizeof(char));
+        // &param[i].buf[0] = '\0';
         if (!value.IsNull())
         {
-          if (param[i].io != SQL_PARAM_OUTPUT)
-          {
-            const char *cString = string.c_str();
-            strncpy((char*)param[i].buf, cString, paramSize);
-          }
+          // if (param[i].io != SQL_PARAM_OUTPUT)
+          // {
+            const char *cString = string.substr(0,paramSize).c_str();
+            //strncpy((char*)param[i].buf, cString, paramSize);
+            strcpy((char*)param[i].buf, cString);
+          // }
         }
       }
       else if (param[i].paramType == SQL_VARCHAR || param[i].paramType == SQL_WVARCHAR)
@@ -2681,7 +2724,7 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
       else if (param[i].paramType == SQL_SMALLINT || param[i].paramType == SQL_INTEGER || param[i].paramType == SQL_BIGINT)
       {
         // Set type
-        param[i].valueType = SQL_C_BIGINT;
+        param[i].valueType = SQL_C_LONG;
         
         // Set indicator
         // - if the parameter value is null set indicator to SQL_NULL_DATA
@@ -2698,8 +2741,10 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
           param[i].ind = 0;
         }
 
+        param[i].buflen = 4;
+
         // Set buffer
-        int64_t *number = (int64_t *)malloc(sizeof(int64_t));
+        int32_t *number = (int32_t *)malloc(sizeof(int32_t));
         if (!value.IsNull() && value.IsNumber())
         {
           *number = value.ToNumber().Int32Value();
@@ -2960,11 +3005,11 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
         param[i].paramSize, //SQLINTEGER Parameter Size -Precision of the param
         param[i].decDigits, //SQLDecimal Digits -Scale of the param
         param[i].buf,       //ParameterValuePtr -Points to buffer that contains actual data for param. OutParams are placed here.
-        0,                  //SQLLEN BufferLength (Not Used in CLI)
+        param[i].buflen,    //SQLLEN BufferLength (Not Used in CLI)
         &param[i].ind);     //SQLLEN* StrLen_or_IndPtr -length of the parameter marker value stored at ParameterValuePtr.
 
-    DEBUG(this, "SQLBindParameter(%d) TYPE[%2d] SIZE[%3d] DIGI[%d] IO[%d] IND[%3d] INDEX[%i] BUF[%s]\n", sqlReturnCode, param[i].paramType, param[i].paramSize, param[i].decDigits, param[i].io, param[i].ind, i, param[i].buf)
-    print_hex((char *)param[i].buf);
+    DEBUG(this, "SQLBindParameter(%d) TYPE[%2d] SIZE[%3d] DIGI[%d] IO[%d] BUFLEN[%3d] IND[%3d] INDEX[%i] BUF[%s]\n", sqlReturnCode, param[i].paramType, param[i].paramSize, param[i].decDigits, param[i].io, param[i].buflen, param[i].ind, i, param[i].buf)
+    // print_hex((char *)param[i].buf);
 
     if (sqlReturnCode != SQL_SUCCESS)
     {
@@ -2981,21 +3026,24 @@ int DbStmt::fetchSp(Napi::Env env, Napi::Array *array)
   {
     db2ParameterDescription *p = &param[i];
 
-    DEBUG(this, "fetchSp(%d): io(%d), ind(%d), p->buf(%s)\n", i+1, p->io, p->ind, (char *)p->buf);
-    print_hex((char *)p->buf);
+    DEBUG(this, "fetchSp: Index(%d), StrLen_or_IndPtr(%3d), ParameterValuePtr(%s)\n", i, p->ind, (char *)p->buf);
+    // print_hex((char *)p->buf);
 
     if (p->io != SQL_PARAM_INPUT)
     {
       if (p->ind == SQL_NULL_DATA) // NULL value
         array->Set(j, env.Null());
-      else if (p->valueType == SQL_C_BIGINT) // Integer
-        array->Set(j, Napi::Number::New(env, *(int64_t *)p->buf).Int32Value());
+      else if (p->valueType == SQL_C_LONG) // Integer
+        array->Set(j, Napi::Number::New(env, *(int32_t *)p->buf).Int32Value());
+      // else if (p->valueType == SQL_C_BIGINT) // Integer
+      //   array->Set(j, Napi::Number::New(env, *(int64_t *)p->buf).Int32Value());
       else if (p->valueType == SQL_C_DOUBLE) // Decimal
         array->Set(j, Napi::Number::New(env, *(double *)p->buf));
       else if (p->valueType == SQL_C_BIT) // Boolean
         array->Set(j, Napi::Boolean::New(env, *(bool *)p->buf));
       else
       {
+        // array->Set(j, Napi::String::New(env, (char *)p->buf)); 
         // Napi::String str = Napi::String::New(env, (char *)p->buf, param[i].paramSize);
         // DEBUG(this, "fetchSp: str(%s)\n", str);
         // array->Set(j, Napi::String::New(env, (char *)p->buf, param[i].paramSize));
@@ -3012,13 +3060,14 @@ int DbStmt::fetchSp(Napi::Env env, Napi::Array *array)
         // Napi::String str = Napi::String::New(env, cppString);
         // array->Set(j, str);
         // DEBUG(this, "fetchSp: p->buf(%s)\n", (char *)p->buf);
+        // This is the latest -->
         std::string bufString;
         if ((char *)p->buf != nullptr)
         {
           bufString = (char *)p->buf;
           // DEBUG(this, "fetchSp: p->buf != nullptr\n");
         }
-        array->Set(j, Napi::String::New(env, bufString));        
+        array->Set(j, Napi::String::New(env, bufString));
       }
       j++;
     }
