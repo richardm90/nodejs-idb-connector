@@ -2652,13 +2652,20 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
       }
       else if (bindIndicator == SQL_BINARY || bindIndicator == SQL_BLOB || value.IsBuffer())
       { //Parameter is blob/binary
-        //convert into Napi::Buffer
+        // Copy the caller's Buffer into an owned allocation sized for
+        // the declared column. CLI does not honour BufferLength for
+        // binary types and may write back through this pointer for
+        // INPUT_OUTPUT binds, so the target must not be V8-owned
+        // memory. Matches the CHAR/CLOB branches below.
         Napi::Buffer<char> buffer = value.As<Napi::Buffer<char>>();
-        int bufferLength = buffer.Length();
+        size_t bufferLength = buffer.Length();
+        size_t allocLen = std::max(static_cast<size_t>(param[i].paramSize), bufferLength);
+        if (allocLen == 0) allocLen = 1;
         param[i].valueType = SQL_C_BINARY;
-        //get a pointer to the buffer
-        char *bufferPtr = buffer.Data();
-        param[i].buf = bufferPtr;
+        param[i].buf = calloc(allocLen, sizeof(char));
+        if (bufferLength > 0) {
+          memcpy(param[i].buf, buffer.Data(), bufferLength);
+        }
         param[i].ind = bufferLength;
       }
       else
@@ -2723,23 +2730,42 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
       case SQL_BINARY:
       case SQL_BLOB:
       {
+        // Copy the caller's Buffer into an owned allocation sized for
+        // the declared column. CLI does not honour BufferLength for
+        // binary types and, since bindParameters binds every param as
+        // SQL_PARAM_INPUT_OUTPUT, may write back through this pointer
+        // — so the target must not be V8-owned memory. The owned
+        // allocation is released by freeSp() on the next bind or on
+        // statement teardown.
         param[i].valueType = SQL_C_BINARY;
-        if(value.IsBuffer())
+        bool isBuffer = value.IsBuffer();
+        size_t bufferLength = 0;
+        const char *bufferPtr = nullptr;
+        if (isBuffer)
         {
           Napi::Buffer<char> buffer = value.As<Napi::Buffer<char>>();
-          int bufferLength = buffer.Length();
-          if(bufferLength > 0)
-          {
-            //get a pointer to the buffer
-            char *bufferPtr = buffer.Data();
-            param[i].buf = bufferPtr;
-            param[i].ind = bufferLength;
-            break;
-          }
+          bufferLength = buffer.Length();
+          bufferPtr = buffer.Data();
         }
-        if(param[i].paramSize > 0) // bufferLength == 0 or value is ''
+        size_t allocLen = std::max(static_cast<size_t>(param[i].paramSize), bufferLength);
+        if (allocLen == 0) allocLen = 1;
+        param[i].buf = calloc(allocLen, sizeof(char));
+        if (bufferLength > 0)
         {
-          param[i].buf = (char *)malloc(param[i].paramSize);;
+          memcpy(param[i].buf, bufferPtr, bufferLength);
+          param[i].ind = bufferLength;
+        }
+        else if (isBuffer)
+        {
+          // Empty Buffer — caller explicitly requested a zero-length
+          // binary value. Don't treat it as an OUT placeholder.
+          param[i].ind = 0;
+        }
+        else
+        {
+          // Non-Buffer value (e.g. an empty string) — historical idiom
+          // for an OUT parameter. Preserve pre-fix behaviour: tell CLI
+          // the full column width is available for it to write into.
           param[i].ind = param[i].paramSize;
         }
       }
