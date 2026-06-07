@@ -433,7 +433,7 @@ describe('Data Type Test', () => {
         expect(error).to.be.null;
         expect(result).to.be.an('array');
         expect(result.length).to.be.greaterThan(0);
-        expect(Object.values(result[0])[0]).to.equal('TRUE');
+        expect(Object.values(result[0])[0]).to.equal(true);
         done();
       });
     });
@@ -444,7 +444,7 @@ describe('Data Type Test', () => {
         expect(error).to.be.null;
         expect(result).to.be.an('array');
         expect(result.length).to.be.greaterThan(0);
-        expect(Object.values(result[0])[0]).to.equal('FALSE');
+        expect(Object.values(result[0])[0]).to.equal(false);
         done();
       });
     });
@@ -461,6 +461,92 @@ describe('Data Type Test', () => {
     });
   });
 
+  describe('bind boolean type', () => {
+    // Round-trips a JS boolean through a real BOOLEAN column: binds true/false/null
+    // as a parameter (write path) then reads it back (read path from a driver-
+    // described BOOLEAN column). The IBM i CLI rejects SQL_C_BIT for a BOOLEAN
+    // parameter, so bindParams binds the value as the string "TRUE"/"FALSE".
+    const user = (process.env.USER).toUpperCase();
+    const table = `${user}.BOOLBIND`;
+
+    before(() => {
+      const setup = new dbstmt(dbConn);
+      try { setup.execSync(`DROP TABLE ${table}`); } catch (e) { /* may not exist */ }
+      setup.execSync(`CREATE TABLE ${table} (ID INT, FLAG BOOLEAN)`);
+      setup.close();
+    });
+
+    after(() => {
+      const cleanup = new dbstmt(dbConn);
+      try { cleanup.execSync(`DROP TABLE ${table}`); } catch (e) { /* ignore */ }
+      cleanup.close();
+    });
+
+    function roundTrip(id, value, expected, done) {
+      dbStmt.prepare(`INSERT INTO ${table} (ID, FLAG) VALUES (?, ?)`, (error) => {
+        expect(error).to.be.null;
+        dbStmt.bindParameters([id, value], (error) => {
+          expect(error).to.be.null;
+          dbStmt.execute((out, error) => {
+            expect(error).to.be.null;
+            const reader = new dbstmt(dbConn);
+            reader.exec(`SELECT FLAG FROM ${table} WHERE ID = ${id}`, (result, error) => {
+              expect(error).to.be.null;
+              expect(result).to.be.an('array');
+              expect(result.length).to.be.greaterThan(0);
+              expect(result[0].FLAG).to.equal(expected);
+              reader.close();
+              done();
+            });
+          });
+        });
+      });
+    }
+
+    it('binds boolean true', (done) => {
+      roundTrip(1, true, true, done);
+    });
+
+    it('binds boolean false', (done) => {
+      roundTrip(2, false, false, done);
+    });
+
+    it('binds boolean null', (done) => {
+      roundTrip(3, null, null, done);
+    });
+  });
+
+  describe('select datalink type', () => {
+    // SQL_DATALINK moved from 16 to -400 to make room for the true BOOLEAN type,
+    // so these tests guard against a DATALINK column being mis-typed. DB2 for i
+    // does not allow casting a character string to DATALINK (SQLCODE -461); a
+    // DATALINK value must be built with DLVALUE(). The driver returns it as the
+    // string URL via the default string-column path.
+    it('datalink with URL', (done) => {
+      const sql = "select dlvalue('http://example.com/file.txt') as datalink_val from sysibm.sysdummy1";
+      dbStmt.exec(sql, (result, error) => {
+        expect(error).to.be.null;
+        expect(result).to.be.an('array');
+        expect(result.length).to.be.greaterThan(0);
+        const value = Object.values(result[0])[0];
+        expect(value).to.be.a('string');
+        // DB2 normalizes the URL scheme and host to uppercase.
+        expect(value.toLowerCase()).to.equal('http://example.com/file.txt');
+        done();
+      });
+    });
+
+    it('datalink null', (done) => {
+      const sql = 'select * from (values cast(null as datalink)) as x (datalink_val)';
+      dbStmt.exec(sql, (result, error) => {
+        expect(error).to.be.null;
+        expect(result).to.be.an('array');
+        expect(result.length).to.be.greaterThan(0);
+        expect(Object.values(result[0])[0]).to.be.null;
+        done();
+      });
+    });
+  });
 
   describe('exec read blob test', () => {
     it('performs action of given SQL String', (done) => {

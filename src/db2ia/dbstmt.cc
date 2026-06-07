@@ -107,7 +107,7 @@ Napi::Object DbStmt::Init(Napi::Env env, Napi::Object exports)
  *        function takes 0 or 1 argument.
  *        info[0] (Boolean): true for ON false for OFF.
  *    Returns: boolean true/false indicating the state of the debug switch.
- * 
+ *
  */
 Napi::Value DbStmt::AsNumber(const Napi::CallbackInfo &info)
 {
@@ -186,7 +186,7 @@ Napi::Value DbStmt::SetStmtAttr(const Napi::CallbackInfo &info)
 /*
  *  DbStmt::GetStmtAttr
  *    Description: Returns the current settings for the specified statement option
- *    Parameters: 
+ *    Parameters:
  *      const Napi::CallbackInfo& info:
  *        The information passed by Napi from the JavaScript call, including
  *        arguments from the JavaScript function. In JavaScript, the exported
@@ -194,7 +194,7 @@ Napi::Value DbStmt::SetStmtAttr(const Napi::CallbackInfo &info)
  *          info[0] (Number): Attribute is the statement attribute to set.
  *                            Refer to the attribute table for more details.
  *    Return: The attribute option in the format of a Number or a String.
- * 
+ *
  */
 Napi::Value DbStmt::GetStmtAttr(const Napi::CallbackInfo &info)
 {
@@ -275,7 +275,7 @@ public:
     //  - SQL_ERROR
     //  - SQL_INVALID_HANDLE
     //  - SQL_NO_DATA_FOUND
-    // SQL_NO_DATA_FOUND is returned if the SQL statement is a Searched UPDATE 
+    // SQL_NO_DATA_FOUND is returned if the SQL statement is a Searched UPDATE
     // or Searched DELETE and no rows satisfy the search condition.
     if (sqlReturnCode == SQL_SUCCESS_WITH_INFO)
     {
@@ -744,7 +744,7 @@ private:
  *    Parameters:
  *      const Napi::CallbackInfo& info:
  *        The information passed by Napi from the JavaScript call. Contains 2 parameters,
- * 
+ *
  *        info[0]: [Array]: An array of arrays, the inner arrays containing
  *                         the data to bind to the prepared statement.
  *        info[1]: [Function]: The callback function, with
@@ -896,7 +896,7 @@ private:
  *    Parameters:
  *      const Napi::CallbackInfo& info:
  *        The information passed by Napi from the JavaScript call. Contains 2 parameters,
- * 
+ *
  *        info[0]: [Array]: An array of the data to bind to the prepared statement.
  *        info[1]: [Function]: The callback function, with
  *                 arguments passed to it in the format function(error):
@@ -1134,7 +1134,7 @@ void DbStmt::Execute(const Napi::CallbackInfo &info)
 
 /*
  *  DbStmt::ExecuteSync
- *    Syntex: executeSync(), executeSync(function(OutputParameters, error)) 
+ *    Syntex: executeSync(), executeSync(function(OutputParameters, error))
  *    Description:
  *      Runs the "Execute" workflow synchronously, blocking the Node.js event
  *      loop. Takes a statement prepared with "Prepare" and possibly bound
@@ -1366,7 +1366,7 @@ private:
  *    Syntex 1: fetch(function Callback(Row, ReturnCode/error))
  *    Syntex 2: fetch(int Orient, int Offset, function Callback(Row, ReturnCode/error))
  *    Description:
- *      Advances the cursor to the next row of the result set, and retrieves any bound columns. 
+ *      Advances the cursor to the next row of the result set, and retrieves any bound columns.
  *      Or positions the cursor based on the requested orientation.
  *    Parameters:
  *      const Napi::CallbackInfo& info:
@@ -2476,6 +2476,16 @@ int DbStmt::buildJsObject(Napi::Env env, Napi::Array *array)
           });
           break;
         }
+        case SQL_BOOLEAN:
+        {
+          // BOOLEAN comes back as the null-terminated string "TRUE" or "FALSE".
+          // The CLI reports the length indicator as SQL_NTS rather than an
+          // explicit byte count, so compare the string value instead of relying
+          // on rlength. NULL is already handled before this switch (JS null).
+          bool boolValue = (strcmp((const char *)resultSetInC[row][col].data, "TRUE") == 0);
+          value = Napi::Boolean::New(env, boolValue);
+          break;
+        }
         case SQL_SMALLINT: // -32768 to +32767
         case SQL_INTEGER:  // -2147483648 to +2147483647
         // case SQL_BIGINT:   // -9223372036854775808 to +9223372036854775807
@@ -2601,7 +2611,7 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
         error = "BIND INDICATOR TYPE OF PARAMETER " + std::to_string(i + 1) + " IS INVALID\n";
         return -1;
       }
-      
+
       param[i].io = io;
       bindIndicator = bindValue.ToNumber().Int32Value(); //convert from Napi::Value to an int
 
@@ -2658,11 +2668,12 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
       }
       else if (bindIndicator == 5 || value.IsBoolean())
       { //Parameter is Boolean
-        bool *boolean = (bool *)malloc(sizeof(bool));
-        *boolean = value.ToBoolean();
-        param[i].valueType = SQL_C_BIT;
-        param[i].buf = boolean;
-        param[i].ind = 0;
+        // The IBM i CLI rejects SQL_C_BIT for a BOOLEAN parameter (HY003), so
+        // bind the value as the character string "TRUE"/"FALSE", which Db2
+        // casts to BOOLEAN. strdup allocates exactly strlen+1 (freed in freeSp).
+        param[i].valueType = SQL_C_CHAR;
+        param[i].buf = strdup(value.ToBoolean() ? "TRUE" : "FALSE");
+        param[i].ind = SQL_NTS;
       }
       else if (bindIndicator == SQL_BINARY || bindIndicator == SQL_BLOB || value.IsBuffer())
       { //Parameter is blob/binary
@@ -2696,11 +2707,12 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
       }
       else if (value.IsBoolean())
       { //Parameter is Boolean
-        bool *boolean = (bool *)malloc(sizeof(bool));
-        *boolean = value.ToBoolean();
-        param[i].valueType = SQL_C_BIT;
-        param[i].buf = boolean;
-        param[i].ind = 0;
+        // The IBM i CLI rejects SQL_C_BIT for a BOOLEAN parameter (HY003), so
+        // bind the value as the character string "TRUE"/"FALSE", which Db2
+        // casts to BOOLEAN. strdup allocates exactly strlen+1 (freed in freeSp).
+        param[i].valueType = SQL_C_CHAR;
+        param[i].buf = strdup(value.ToBoolean() ? "TRUE" : "FALSE");
+        param[i].ind = SQL_NTS;
       }
       else switch(param[i].paramType)
       {
@@ -2766,7 +2778,7 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
         {
           std::string string = value.ToString().Utf8Value();
           const char *cString = string.c_str();
-          if(strlen(cString) > 0) 
+          if(strlen(cString) > 0)
           {
             strcpy((char *)param[i].buf, cString);
             param[i].ind = strlen(cString);
@@ -2806,7 +2818,7 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
       break;
       }
     }
-    
+
     //link to doc https://www.ibm.com/support/knowledgecenter/en/ssw_ibm_i_73/cli/rzadpfnbndpm.htm
     sqlReturnCode = SQLBindParameter(
         stmth,              //SQLHSTMT statement handle
