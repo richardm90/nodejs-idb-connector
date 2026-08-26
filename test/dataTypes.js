@@ -465,7 +465,7 @@ describe('Data Type Test', () => {
     // Round-trips a JS boolean through a real BOOLEAN column: binds true/false/null
     // as a parameter (write path) then reads it back (read path from a driver-
     // described BOOLEAN column). The IBM i CLI rejects SQL_C_BIT for a BOOLEAN
-    // parameter, so bindParams binds the value as the string "TRUE"/"FALSE".
+    // parameter, so bindParams binds the value as an integer 1/0 (SQL_C_LONG).
     const user = (process.env.USER).toUpperCase();
     const table = `${user}.BOOLBIND`;
 
@@ -513,6 +513,59 @@ describe('Data Type Test', () => {
 
     it('binds boolean null', (done) => {
       roundTrip(3, null, null, done);
+    });
+
+    // fetch() has its own column-conversion switch, separate from the one
+    // fetchAll()/exec() use, so a BOOLEAN column has to be handled in both.
+    it('returns a boolean from single-row fetch', (done) => {
+      dbStmt.prepare(`SELECT FLAG FROM ${table} WHERE ID = 1`, (error) => {
+        expect(error).to.be.null;
+        dbStmt.execute((out, error) => {
+          expect(error).to.be.null;
+          dbStmt.fetch((result, error) => {
+            expect(result).to.be.an('object');
+            expect(result.FLAG).to.equal(true);
+            done();
+          });
+        });
+      });
+    });
+  });
+
+  describe('boolean output parameter', () => {
+    // Exercises the output side of the boolean parameter binding, which
+    // fetchSp() converts back to a JS boolean.
+    const user = (process.env.USER).toUpperCase();
+    const proc = `${user}.BOOLNOT`;
+
+    before(() => {
+      const setup = new dbstmt(dbConn);
+      setup.execSync(`CREATE OR REPLACE PROCEDURE ${proc} (INOUT P BOOLEAN)
+                      BEGIN
+                        SET P = NOT P;
+                      END`);
+      setup.close();
+    });
+
+    after(() => {
+      const cleanup = new dbstmt(dbConn);
+      try { cleanup.execSync(`DROP PROCEDURE ${proc}`); } catch (e) { /* ignore */ }
+      cleanup.close();
+    });
+
+    it('returns a boolean output parameter', (done) => {
+      dbStmt.prepare(`CALL ${proc}(?)`, (error) => {
+        expect(error).to.be.null;
+        dbStmt.bindParameters([true], (error) => {
+          expect(error).to.be.null;
+          dbStmt.execute((out, error) => {
+            expect(error).to.be.null;
+            expect(out).to.be.an('array');
+            expect(out[0]).to.equal(false);
+            done();
+          });
+        });
+      });
     });
   });
 

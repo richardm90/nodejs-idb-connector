@@ -2347,14 +2347,23 @@ int DbStmt::bindColData(Napi::Env env)
       sqlReturnCode = SQLBindCol(stmth, col + 1, SQL_C_CHAR, (SQLPOINTER)bindingRowInC[col], maxColLen, &dbColumn[col].rlength);
     }
     break;
-    default: // SQL_CHAR / SQL_VARCHAR / SQL_BOOLEAN and other string-representable types
+    case SQL_BOOLEAN:
+    {
+      // Bind as an integer (1/0) rather than letting the CLI render the
+      // "TRUE"/"FALSE" string, so the buffer size does not depend on the
+      // string representation.
+      // NOTE: on IBM i 7.4 and earlier, type code 16 is DATALINK rather than
+      // BOOLEAN (see dberror.h). Such a column reaches this case and will fail
+      // to bind, where the string binding used to tolerate it.
+      maxColLen = sizeof(int);
+      bindingRowInC[col] = (SQLCHAR *)calloc(maxColLen, sizeof(SQLCHAR));
+      sqlReturnCode = SQLBindCol(stmth, col + 1, SQL_C_LONG, (SQLPOINTER)bindingRowInC[col], maxColLen, &dbColumn[col].rlength);
+    }
+    break;
+    default: // SQL_CHAR / SQL_VARCHAR and other string-representable types
     {
       // colPrecise * 4 + 1 accounts for multi-byte character expansion + null terminator.
-      // Minimum of 6 ensures types like BOOLEAN (colPrecise=1, but string representation
-      // "FALSE" needs 6 bytes) have a large enough buffer.
       maxColLen = dbColumn[col].colPrecise * 4 + 1;
-      if (maxColLen < 6)
-        maxColLen = 6;
       bindingRowInC[col] = (SQLCHAR *)calloc(maxColLen, sizeof(SQLCHAR));
       sqlReturnCode = SQLBindCol(stmth, col + 1, SQL_C_CHAR, (SQLPOINTER)bindingRowInC[col], maxColLen, &dbColumn[col].rlength);
     }
@@ -2415,6 +2424,17 @@ int DbStmt::fetchData()
           DEBUG(this, "SQLSetConnectAttr(%d, %d, %d, 1) returned %d\n", connh,
                 SQL_ATTR_FREE_LOCATORS, dbColumn[col].clobLoc);
         }
+      }
+      else if (dbColumn[col].sqlType == SQL_BOOLEAN && dbColumn[col].rlength != SQL_NULL_DATA)
+      {
+        // Bound as SQL_C_LONG, so the buffer always holds sizeof(int) bytes.
+        // Copy a fixed width rather than trusting rlength: the CLI reports
+        // SQL_NTS for BOOLEAN, and the strlen() path below would read 0 bytes
+        // for false (0x00000000) and 1 byte for true.
+        colLen = sizeof(int);
+        rowOfResultSetInC[col].data = (SQLCHAR *)calloc(colLen, sizeof(SQLCHAR));
+        memcpy(rowOfResultSetInC[col].data, bindingRowInC[col], colLen);
+        rowOfResultSetInC[col].rlength = colLen;
       }
       else if (dbColumn[col].rlength == SQL_NTS)
       { // SQL_NTS = -3
@@ -2478,12 +2498,12 @@ int DbStmt::buildJsObject(Napi::Env env, Napi::Array *array)
         }
         case SQL_BOOLEAN:
         {
-          // BOOLEAN comes back as the null-terminated string "TRUE" or "FALSE".
-          // The CLI reports the length indicator as SQL_NTS rather than an
-          // explicit byte count, so compare the string value instead of relying
-          // on rlength. NULL is already handled before this switch (JS null).
-          bool boolValue = (strcmp((const char *)resultSetInC[row][col].data, "TRUE") == 0);
-          value = Napi::Boolean::New(env, boolValue);
+          // Bound as SQL_C_LONG, so the buffer holds a 4-byte 1/0 (see
+          // fetchData, which copies it at a fixed width).
+          // NULL is already handled before this switch (JS null).
+          int boolValue;
+          memcpy(&boolValue, resultSetInC[row][col].data, sizeof(int));
+          value = Napi::Boolean::New(env, boolValue != 0);
           break;
         }
         case SQL_SMALLINT: // -32768 to +32767
@@ -2891,6 +2911,16 @@ int DbStmt::fetch(Napi::Env env, Napi::Object *row)
       case SQL_BLOB:
         value = Napi::Buffer<char>::New(env, bindingRowInC[col], dbColumn[col].rlength);
         break;
+      case SQL_BOOLEAN:
+      {
+        // Bound as SQL_C_LONG, so the buffer holds a 4-byte 1/0. Previously
+        // this fell through to the default and returned the string
+        // "TRUE"/"FALSE", which fetchAll() has never done.
+        int boolValue;
+        memcpy(&boolValue, bindingRowInC[col], sizeof(int));
+        value = Napi::Boolean::New(env, boolValue != 0);
+        break;
+      }
       default:
         value = Napi::String::New(env, bindingRowInC[col]);
         break;
