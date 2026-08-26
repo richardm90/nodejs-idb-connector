@@ -2669,11 +2669,13 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
       else if (bindIndicator == 5 || value.IsBoolean())
       { //Parameter is Boolean
         // The IBM i CLI rejects SQL_C_BIT for a BOOLEAN parameter (HY003), so
-        // bind the value as the character string "TRUE"/"FALSE", which Db2
-        // casts to BOOLEAN. strdup allocates exactly strlen+1 (freed in freeSp).
-        param[i].valueType = SQL_C_CHAR;
-        param[i].buf = strdup(value.ToBoolean() ? "TRUE" : "FALSE");
-        param[i].ind = SQL_NTS;
+        // bind an integer instead: Db2 accepts 1/0 for BOOLEAN, and the fixed
+        // 4-byte buffer is also large enough to receive an output value.
+        int *boolean = (int *)malloc(sizeof(int));
+        *boolean = value.ToBoolean() ? 1 : 0;
+        param[i].valueType = SQL_C_LONG;
+        param[i].buf = boolean;
+        param[i].ind = 0;
       }
       else if (bindIndicator == SQL_BINARY || bindIndicator == SQL_BLOB || value.IsBuffer())
       { //Parameter is blob/binary
@@ -2708,11 +2710,13 @@ int DbStmt::bindParams(Napi::Env env, Napi::Array *params, std::string &error)
       else if (value.IsBoolean())
       { //Parameter is Boolean
         // The IBM i CLI rejects SQL_C_BIT for a BOOLEAN parameter (HY003), so
-        // bind the value as the character string "TRUE"/"FALSE", which Db2
-        // casts to BOOLEAN. strdup allocates exactly strlen+1 (freed in freeSp).
-        param[i].valueType = SQL_C_CHAR;
-        param[i].buf = strdup(value.ToBoolean() ? "TRUE" : "FALSE");
-        param[i].ind = SQL_NTS;
+        // bind an integer instead: Db2 accepts 1/0 for BOOLEAN, and the fixed
+        // 4-byte buffer is also large enough to receive an output value.
+        int *boolean = (int *)malloc(sizeof(int));
+        *boolean = value.ToBoolean() ? 1 : 0;
+        param[i].valueType = SQL_C_LONG;
+        param[i].buf = boolean;
+        param[i].ind = 0;
       }
       else switch(param[i].paramType)
       {
@@ -2854,8 +2858,8 @@ int DbStmt::fetchSp(Napi::Env env, Napi::Array *array)
         array->Set(j, Napi::Number::New(env, *(int64_t *)p->buf).Int32Value());
       else if (p->valueType == SQL_C_DOUBLE) // Decimal
         array->Set(j, Napi::Number::New(env, *(double *)p->buf));
-      else if (p->valueType == SQL_C_BIT) // Boolean
-        array->Set(j, Napi::Boolean::New(env, *(bool *)p->buf));
+      else if (p->valueType == SQL_C_LONG) // Boolean
+        array->Set(j, Napi::Boolean::New(env, *(int *)p->buf != 0));
       else
         array->Set(j, Napi::String::New(env, (char *)p->buf));
       j++;
