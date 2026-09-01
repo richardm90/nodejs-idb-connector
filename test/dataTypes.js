@@ -4,7 +4,7 @@ const fs = require('fs');
 const db2a = require('../lib/db2a');
 
 const {
-  BLOB, BINARY, IN, OUT, INOUT, INT, BOOLEAN, dbstmt, dbconn,
+  BLOB, BINARY, IN, OUT, INOUT, INT, CHAR, NUMERIC, BOOLEAN, dbstmt, dbconn,
 } = db2a;
 
 describe('Data Type Test', () => {
@@ -672,6 +672,134 @@ describe('Data Type Test', () => {
           });
         });
       });
+    });
+  });
+
+  describe('boolean output parameter shapes', () => {
+    // Two shapes the INOUT round-trip above never reaches: a pure OUT
+    // parameter bound through the 2-D API, and a procedure that sets the
+    // parameter to NULL.
+    const user = (process.env.USER).toUpperCase();
+    const proc = `${user}.BOOLSHAPES`;
+
+    before(() => {
+      const setup = new dbstmt(dbConn);
+      setup.execSync(`CREATE OR REPLACE PROCEDURE ${proc} (OUT P1 BOOLEAN, INOUT P2 BOOLEAN)
+                      BEGIN
+                        SET P1 = TRUE;
+                        SET P2 = NULL;
+                      END`);
+      setup.close();
+    });
+
+    after(() => {
+      const cleanup = new dbstmt(dbConn);
+      try { cleanup.execSync(`DROP PROCEDURE ${proc}`); } catch (e) { /* ignore */ }
+      cleanup.close();
+    });
+
+    it('returns a pure OUT boolean parameter', (done) => {
+      dbStmt.prepare(`CALL ${proc}(?, ?)`, (error) => {
+        expect(error).to.be.null;
+        dbStmt.bindParam([[false, OUT, BOOLEAN], [true, INOUT, BOOLEAN]], (error) => {
+          expect(error).to.be.null;
+          dbStmt.execute((out, error) => {
+            expect(error).to.be.null;
+            expect(out).to.be.an('array');
+            expect(out[0]).to.equal(true);
+            done();
+          });
+        });
+      });
+    });
+
+    // fetchSp() reads the parameter buffer directly and never consults the
+    // null indicator, so a NULL set by the procedure is expected to come back
+    // as false rather than null. This test is expected to fail.
+    it('returns null for a boolean output parameter set to NULL', (done) => {
+      dbStmt.prepare(`CALL ${proc}(?, ?)`, (error) => {
+        expect(error).to.be.null;
+        dbStmt.bindParam([[false, OUT, BOOLEAN], [true, INOUT, BOOLEAN]], (error) => {
+          expect(error).to.be.null;
+          dbStmt.execute((out, error) => {
+            expect(error).to.be.null;
+            expect(out).to.be.an('array');
+            expect(out[1]).to.be.null;
+            done();
+          });
+        });
+      });
+    });
+  });
+
+  describe('null output parameters of every bound type', () => {
+    // fetchSp() reads each output parameter's buffer directly. Without the
+    // indicator check it reports whatever that buffer holds once the procedure
+    // has returned NULL, which differs per bound C type. One test per type, so
+    // a pre-fix run records exactly what each one came back as.
+    const user = (process.env.USER).toUpperCase();
+    const proc = `${user}.NULLOUT`;
+
+    before(() => {
+      const setup = new dbstmt(dbConn);
+      setup.execSync(`CREATE OR REPLACE PROCEDURE ${proc} (
+                        INOUT P_CHAR CHAR(10),
+                        INOUT P_INT INT,
+                        INOUT P_DEC DECIMAL(7,2),
+                        INOUT P_BOOL BOOLEAN)
+                      BEGIN
+                        SET P_CHAR = NULL;
+                        SET P_INT = NULL;
+                        SET P_DEC = NULL;
+                        SET P_BOOL = NULL;
+                      END`);
+      setup.close();
+    });
+
+    after(() => {
+      const cleanup = new dbstmt(dbConn);
+      try { cleanup.execSync(`DROP PROCEDURE ${proc}`); } catch (e) { /* ignore */ }
+      cleanup.close();
+    });
+
+    // Bound with the 2-D API so each parameter's C type is chosen explicitly:
+    // CHAR -> SQL_C_CHAR, INT -> SQL_C_BIGINT, NUMERIC -> SQL_C_DOUBLE,
+    // BOOLEAN -> SQL_C_LONG. Every fetchSp() branch is therefore exercised.
+    function callNullOut(assert, done) {
+      dbStmt.prepare(`CALL ${proc}(?, ?, ?, ?)`, (error) => {
+        expect(error).to.be.null;
+        dbStmt.bindParam([
+          ['abcdefghij', INOUT, CHAR],
+          [42, INOUT, INT],
+          [3.14, INOUT, NUMERIC],
+          [true, INOUT, BOOLEAN],
+        ], (error) => {
+          expect(error).to.be.null;
+          dbStmt.execute((out, error) => {
+            expect(error).to.be.null;
+            expect(out).to.be.an('array');
+            expect(out.length).to.equal(4);
+            assert(out);
+            done();
+          });
+        });
+      });
+    }
+
+    it('returns null for a NULL CHAR output parameter', (done) => {
+      callNullOut((out) => { expect(out[0]).to.be.null; }, done);
+    });
+
+    it('returns null for a NULL INTEGER output parameter', (done) => {
+      callNullOut((out) => { expect(out[1]).to.be.null; }, done);
+    });
+
+    it('returns null for a NULL DECIMAL output parameter', (done) => {
+      callNullOut((out) => { expect(out[2]).to.be.null; }, done);
+    });
+
+    it('returns null for a NULL BOOLEAN output parameter', (done) => {
+      callNullOut((out) => { expect(out[3]).to.be.null; }, done);
     });
   });
 

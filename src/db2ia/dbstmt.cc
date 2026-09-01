@@ -2874,7 +2874,12 @@ int DbStmt::fetchSp(Napi::Env env, Napi::Array *array)
     db2ParameterDescription *p = &param[i];
     if (p->io != SQL_PARAM_INPUT)
     {
-      if (p->valueType == SQL_C_BIGINT) // Integer
+      // The driver writes SQL_NULL_DATA into the indicator when the procedure
+      // returns NULL. Without this check the parameter buffer is read as if it
+      // held a value, so a NULL BOOLEAN came back as false.
+      if (p->ind == SQL_NULL_DATA)
+        array->Set(j, env.Null());
+      else if (p->valueType == SQL_C_BIGINT) // Integer
         array->Set(j, Napi::Number::New(env, *(int64_t *)p->buf).Int32Value());
       else if (p->valueType == SQL_C_DOUBLE) // Decimal
         array->Set(j, Napi::Number::New(env, *(double *)p->buf));
