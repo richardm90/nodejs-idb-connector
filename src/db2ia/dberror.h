@@ -23,12 +23,6 @@
 #define SQL_BOOLEAN 16
 #endif
 
-// The matching application (C) type. Also absent from the stale bundled header;
-// 7.5 QSYSINC defines it as SQL_BOOLEAN.
-#ifndef SQL_C_BOOLEAN
-#define SQL_C_BOOLEAN SQL_BOOLEAN
-#endif
-
 #ifdef SQL_DATALINK
 #undef SQL_DATALINK
 #endif
